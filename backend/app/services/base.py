@@ -57,6 +57,7 @@ class BaseModuleService:
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
+        store.flush(self.MODULE)
         return entry, []
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
@@ -69,6 +70,7 @@ class BaseModuleService:
         entry["status"] = target
         entry["pending"] = target != self.STATUS_ORDER[-1]
         entry["abnormal"] = action in self.NEGATIVE_ACTIONS
+        store.flush(self.MODULE)
         return entry, f"{self.ENTITY}已{action}"
 
     def domain_snapshot(self) -> dict[str, Any]:

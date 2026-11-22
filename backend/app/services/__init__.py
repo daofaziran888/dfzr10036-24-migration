@@ -24,6 +24,11 @@ from app.services.data_diff import DataDiffService
 from app.services.task_schedule import TaskScheduleService
 from app.services.stream_audit import StreamAuditService
 from app.services.stream_health import StreamHealthService
+from app.services.file_evidence import FileEvidenceService
+from app.services.commit_file import CommitFileService
+from app.services.commit_receipt import CommitReceiptService
+from app.services.data_diff_row import DataDiffRowService
+from app.services.commit_recovery_run import CommitRecoveryRunService
 
 SERVICES: dict[str, BaseModuleService] = {
     "cdc_source": CdcSourceService(),
@@ -48,6 +53,11 @@ SERVICES: dict[str, BaseModuleService] = {
     "task_schedule": TaskScheduleService(),
     "stream_audit": StreamAuditService(),
     "stream_health": StreamHealthService(),
+    "file_evidence": FileEvidenceService(),
+    "commit_file": CommitFileService(),
+    "commit_receipt": CommitReceiptService(),
+    "data_diff_row": DataDiffRowService(),
+    "commit_recovery_run": CommitRecoveryRunService(),
 }
 
 

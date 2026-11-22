@@ -18,6 +18,7 @@ from app.services.checkpoint import CheckpointService
 from app.services.iceberg_commit import IcebergCommitService
 from app.services.compaction import CompactionService
 from app.services.ddl_handle import DdlHandleService
+from app.services.backfill_run import BackfillRunService
 
 
 cdc_source = CdcSourceService()
@@ -32,6 +33,7 @@ checkpoint = CheckpointService()
 iceberg_commit = IcebergCommitService()
 compaction = CompactionService()
 ddl_handle = DdlHandleService()
+backfill_run = BackfillRunService()
 
 
 def flow_cdc_to_lake(cdc_entry_id: int) -> dict[str, Any]:
@@ -146,13 +148,30 @@ def flow_ddl_propagation(ddl_entry_id: int) -> dict[str, Any]:
 
 
 def flow_commit_failure_recovery(commit_entry_id: int) -> dict[str, Any]:
-    """主线链路4: Iceberg提交冲突→数据比对→告警→回填修复
+    """主线链路4: Iceberg提交冲突→提交失败恢复→数据比对→告警→回填修复
 
     调用数: 5+
+
+    恢复只按快照自身记录的文件路径（v2 清单或兼容的 v1 单路径）确定范围；
+    缺证的文件留在“待证据”，同一窗口重复调用只回放首次结果。
     """
+    from app.services import commit_recovery
+
     trace: list[str] = []
 
-    # 1. 提交冲突 → data_diff + alert
+    # 1. 提交失败恢复：确定实际处理范围（含回执跳过与待证据路径）
+    recovered = commit_recovery.recover(commit_entry_id)
+    if not recovered.get("ok"):
+        return {"ok": False, "step": "commit_recovery", "message": recovered.get("message")}
+    for report in recovered.get("处理快照", []):
+        trace.append(
+            f"commit_recovery#{report['窗口']} -> 快照{report['快照别名']}"
+            f"({report['清单版本']}) 处理{len(report['实际处理范围'])}份"
+            f" 跳过回执{len(report['跳过回执范围'])}份"
+            f" 待证据{len(report['延后缺证范围'])}份"
+        )
+
+    # 2. 提交冲突 → data_diff + alert（内部按文件路径逐份比对）
     result = iceberg_commit.handle_commit_conflict(commit_entry_id)
     if result is None:
         return {"ok": False, "step": "iceberg_commit", "message": "无提交冲突"}
@@ -162,7 +181,20 @@ def flow_commit_failure_recovery(commit_entry_id: int) -> dict[str, Any]:
     if result.get("alert"):
         trace.append(f"iceberg_commit#{commit_entry_id} -> alert_rule#{result['alert']['id']}")
 
-    return {"ok": True, "trace": trace, "call_count": len(trace)}
+    # 3. 差异行 → 回填任务修复
+    comparison = result.get("comparison") or {}
+    diff_total = sum(
+        item.get("差异行数", 0)
+        for snapshot in comparison.get("快照", [])
+        for item in snapshot.get("文件", [])
+    )
+    if diff_total > 0:
+        backfill = backfill_run.trigger_from_diff(diff_total)
+        if backfill:
+            trace.append(f"data_diff#差异{diff_total}行 -> backfill_run#{backfill['id']}")
+
+    return {"ok": True, "trace": trace, "call_count": len(trace),
+            "recovery": recovered, "comparison": comparison}
 
 
 def flow_cache_invalidation(dim_entry_id: int) -> dict[str, Any]:
